@@ -1,0 +1,531 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>EduTrack Responsive Portal</title>
+  
+  <!-- Tailwind CSS -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  
+  <!-- React & ReactDOM -->
+  <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+  <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+  
+  <!-- Babel for in-browser JSX compilation -->
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+  <style>
+    .custom-scrollbar::-webkit-scrollbar { height: 8px; width: 8px; }
+    .custom-scrollbar::-webkit-scrollbar-track { background: #f1f5f9; border-radius: 4px; }
+    .custom-scrollbar::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 4px; }
+    .custom-scrollbar::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
+    input[type="date"]::-webkit-calendar-picker-indicator,
+    input[type="month"]::-webkit-calendar-picker-indicator { cursor: pointer; opacity: 0.6; transition: 0.2s; }
+    input[type="date"]::-webkit-calendar-picker-indicator:hover,
+    input[type="month"]::-webkit-calendar-picker-indicator:hover { opacity: 1; }
+    
+    /* Simple Loading Spinner */
+    .loader {
+      border: 4px solid #f3f3f3; border-top: 4px solid #2563eb;
+      border-radius: 50%; width: 40px; height: 40px;
+      animation: spin 1s linear infinite; margin: 0 auto;
+    }
+    @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+  </style>
+</head>
+<body class="bg-slate-50 text-slate-800 antialiased selection:bg-blue-200 selection:text-blue-900">
+  <div id="root"></div>
+
+  <script type="text/babel">
+    const { useState, useEffect } = React;
+
+    // --- MOCK DATA FALLBACKS ---
+    const fallbackStudents = [
+      { id: '1', name: 'Alvarez, Carlos', gender: 'M' },
+      { id: '2', name: 'Bautista, John', gender: 'M' },
+      { id: '5', name: 'Aquino, Maria', gender: 'F' },
+    ];
+    const todayStr = new Date().toISOString().split('T')[0];
+    const initialUsers = { 'teacher': { password: 'password', name: 'Demo Teacher', role: 'adviser' } };
+
+    // --- MAIN APP COMPONENT ---
+    function App() {
+      // ⚠️ IMPORTANT: PASTE YOUR GOOGLE APPS SCRIPT WEB APP URL HERE
+      const SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbwvW89RSQo3jz73CZosXiqGHU0QVBeTEH9VyABkZuRlHecJ7X6sTr5m18F0VGgQkZN9/exec'; 
+
+      // Loading States
+      const [isInitializing, setIsInitializing] = useState(true);
+      const [isSaving, setIsSaving] = useState(false);
+
+      // App Data State (Fetched from Cloud)
+      const [users, setUsers] = useState(initialUsers);
+      const [students, setStudents] = useState(fallbackStudents);
+      const [attendanceData, setAttendanceData] = useState({}); 
+
+      // Auth State
+      const [currentUser, setCurrentUser] = useState(null);
+      const [authMode, setAuthMode] = useState('login');
+      const [authError, setAuthError] = useState('');
+      const [username, setUsername] = useState('');
+      const [password, setPassword] = useState('');
+      const [fullName, setFullName] = useState('');
+      const [preferredRole, setPreferredRole] = useState('adviser');
+
+      // Application State
+      const [currentDate, setCurrentDate] = useState(todayStr);
+      const [currentMonth, setCurrentMonth] = useState(todayStr.substring(0, 7));
+      const [activeTab, setActiveTab] = useState('daily');
+      const [viewRole, setViewRole] = useState('adviser');
+
+      // --- INITIAL DATA FETCH ---
+      useEffect(() => {
+        if (!SCRIPT_URL) {
+          console.warn("No SCRIPT_URL provided. Using offline dummy data.");
+          setIsInitializing(false);
+          return;
+        }
+
+        fetch(SCRIPT_URL)
+          .then(res => res.json())
+          .then(data => {
+            if (Object.keys(data.users).length > 0) setUsers(data.users);
+            if (data.students.length > 0) setStudents(data.students);
+            if (data.attendance) setAttendanceData(data.attendance);
+            setIsInitializing(false);
+          })
+          .catch(err => {
+            console.error("Fetch error: ", err);
+            alert("Could not connect to Google Sheets. Running in offline mode.");
+            setIsInitializing(false);
+          });
+      }, []);
+
+      // --- AUTH HANDLERS ---
+      const handleAuthSubmit = async (e) => {
+        e.preventDefault();
+        setAuthError('');
+
+        if (authMode === 'login') {
+          if (users[username] && users[username].password === password) {
+            setCurrentUser({ username, ...users[username] });
+            setViewRole(users[username].role);
+            setUsername(''); setPassword('');
+          } else {
+            setAuthError('Invalid username or password.');
+          }
+        } else {
+          // Register Mode
+          if (users[username]) return setAuthError('Username already exists.');
+          if (!username || !password || !fullName) return setAuthError('Please fill in all fields.');
+          
+          const newUser = { password, name: fullName, role: preferredRole };
+          setUsers({ ...users, [username]: newUser }); // Update local instantly
+          
+          if (SCRIPT_URL) {
+             setIsSaving(true);
+             try {
+                await fetch(SCRIPT_URL, {
+                  method: 'POST',
+                  body: JSON.stringify({ action: 'registerUser', user: { username, ...newUser } }),
+                  headers: { 'Content-Type': 'text/plain;charset=utf-8' }
+                });
+             } catch(e) { console.error("Failed to save user to cloud."); }
+             setIsSaving(false);
+          }
+
+          setCurrentUser({ username, ...newUser });
+          setViewRole(preferredRole);
+          setUsername(''); setPassword(''); setFullName('');
+        }
+      };
+
+      const handleLogout = () => { setCurrentUser(null); setActiveTab('daily'); };
+
+      // --- ATTENDANCE HANDLERS ---
+      const markAttendance = (studentId, session, status) => {
+        setAttendanceData(prev => {
+          const dateData = prev[currentDate] || {};
+          const studentData = dateData[studentId] || {};
+          return { ...prev, [currentDate]: { ...dateData, [studentId]: { ...studentData, [session]: status } } };
+        });
+      };
+
+      const markAll = (session, status) => {
+        setAttendanceData(prev => {
+          const dateData = { ...(prev[currentDate] || {}) };
+          students.forEach(student => {
+            if (!dateData[student.id]) dateData[student.id] = {};
+            dateData[student.id][session] = status;
+          });
+          return { ...prev, [currentDate]: dateData };
+        });
+      };
+
+      // --- SAVE TO GOOGLE SHEETS ---
+      const saveAttendanceToServer = async () => {
+        if (!SCRIPT_URL) return alert("Please configure the SCRIPT_URL in index.html to save to cloud.");
+        setIsSaving(true);
+        try {
+          const payload = {
+            action: 'saveAttendance',
+            date: currentDate,
+            records: attendanceData[currentDate] || {}
+          };
+          
+          await fetch(SCRIPT_URL, {
+            method: 'POST',
+            body: JSON.stringify(payload),
+            headers: { 'Content-Type': 'text/plain;charset=utf-8' } // Text plain avoids CORS errors with GAS
+          });
+          alert("✅ Attendance successfully saved to cloud!");
+        } catch (err) {
+          console.error(err);
+          alert("❌ Failed to save to cloud.");
+        }
+        setIsSaving(false);
+      };
+
+      // --- STATS CALCULATION (DAILY) ---
+      const calculateDailyStats = (genderFilter) => {
+        const filteredStudents = students.filter(s => genderFilter === 'all' || s.gender === genderFilter);
+        const enrollment = filteredStudents.length;
+        let present = 0, absent = 0;
+        const dateRecord = attendanceData[currentDate] || {};
+
+        filteredStudents.forEach(student => {
+          const record = dateRecord[student.id] || {};
+          if (viewRole === 'adviser') {
+            if (record.am === 'present' || record.pm === 'present') present++;
+            else absent++; 
+          } else {
+            if (record.single === 'present') present++;
+            else absent++;
+          }
+        });
+        const ada = present;
+        const pda = enrollment > 0 ? ((present / enrollment) * 100).toFixed(1) : "0.0";
+        return { enrollment, present, absent, ada, pda };
+      };
+
+      const dailyMaleStats = calculateDailyStats('M');
+      const dailyFemaleStats = calculateDailyStats('F');
+      const dailyTotalStats = calculateDailyStats('all');
+
+      // --- STATS CALCULATION (MONTHLY) ---
+      const getMonthlyStats = () => {
+        const daysInMonth = Object.keys(attendanceData).filter(dateStr => dateStr.startsWith(currentMonth));
+        const totalSchoolDays = daysInMonth.length;
+        let totalOverallPresent = 0;
+
+        const studentMonthlyData = students.map(student => {
+          let daysPresent = 0, daysAbsent = 0;
+          daysInMonth.forEach(date => {
+            const record = attendanceData[date][student.id] || {};
+            let isPresentForDay = viewRole === 'adviser' 
+                ? (record.am === 'present' || record.pm === 'present')
+                : (record.single === 'present');
+
+            if (isPresentForDay) { daysPresent++; totalOverallPresent++; } 
+            else { daysAbsent++; }
+          });
+          const percentage = totalSchoolDays > 0 ? ((daysPresent / totalSchoolDays) * 100).toFixed(1) : "0.0";
+          return { ...student, daysPresent, daysAbsent, percentage };
+        });
+
+        const monthlyADA = totalSchoolDays > 0 ? (totalOverallPresent / totalSchoolDays).toFixed(2) : "0.00";
+        const enrollment = students.length;
+        const monthlyPDA = (totalSchoolDays > 0 && enrollment > 0) ? ((totalOverallPresent / (enrollment * totalSchoolDays)) * 100).toFixed(1) : "0.0";
+
+        return { studentMonthlyData, totalSchoolDays, monthlyADA, monthlyPDA };
+      };
+
+      const { studentMonthlyData, totalSchoolDays, monthlyADA, monthlyPDA } = getMonthlyStats();
+
+      // --- RENDER LOADERS ---
+      if (isInitializing) {
+        return (
+           <div className="min-h-screen flex flex-col items-center justify-center bg-slate-50">
+             <div className="loader mb-4"></div>
+             <p className="text-slate-600 font-medium animate-pulse">Connecting to Google Sheets Database...</p>
+           </div>
+        );
+      }
+
+      // --- RENDER LOGIN/REGISTER ---
+      if (!currentUser) {
+        return (
+          <div className="min-h-screen flex items-center justify-center p-4">
+            <div className="w-full max-w-md bg-white rounded-2xl shadow-xl border border-slate-100 p-8">
+              <div className="text-center mb-8">
+                <div className="w-16 h-16 bg-blue-600 rounded-2xl mx-auto flex items-center justify-center mb-4 shadow-lg shadow-blue-200">
+                  <span className="text-2xl font-black text-white">ET</span>
+                </div>
+                <h1 className="text-2xl font-bold text-slate-800">EduTrack Portal</h1>
+                <p className="text-slate-500 text-sm mt-1">{authMode === 'login' ? 'Sign in to access your dashboard' : 'Create a new teacher account'}</p>
+              </div>
+
+              {authError && <div className="mb-4 p-3 bg-red-50 text-red-600 rounded-lg text-sm border border-red-100 text-center">{authError}</div>}
+
+              <form onSubmit={handleAuthSubmit} className="space-y-5">
+                {authMode === 'register' && (
+                  <div>
+                    <label className="block text-sm font-medium text-slate-700 mb-1">Full Name</label>
+                    <input type="text" value={fullName} onChange={(e) => setFullName(e.target.value)} className="w-full px-4 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none" placeholder="e.g. Juan Dela Cruz" />
+                  </div>
+                )}
+                <div>
+                  <label className="block text-sm font-medium text-slate-700 mb-1">Username</label>
+                  <input type="text" value={username} onChange={(e) => setUsername(e.target.value)} className="w-full px-4 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none" placeholder="Enter username" />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-slate-700 mb-1">Password</label>
+                  <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} className="w-full px-4 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none" placeholder="Enter password" />
+                </div>
+                {authMode === 'register' && (
+                  <div>
+                    <label className="block text-sm font-medium text-slate-700 mb-1">Primary Role</label>
+                    <select value={preferredRole} onChange={(e) => setPreferredRole(e.target.value)} className="w-full px-4 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none bg-white">
+                      <option value="adviser">Class Adviser (AM/PM)</option>
+                      <option value="subject">Subject Teacher (Single)</option>
+                    </select>
+                  </div>
+                )}
+                <button type="submit" disabled={isSaving} className="w-full bg-blue-600 hover:bg-blue-700 text-white font-semibold py-2.5 rounded-lg shadow-sm disabled:bg-blue-400">
+                  {isSaving ? 'Connecting to Cloud...' : (authMode === 'login' ? 'Sign In' : 'Create Account')}
+                </button>
+              </form>
+
+              <div className="mt-6 text-center text-sm text-slate-500">
+                {authMode === 'login' 
+                  ? <p>Don't have an account? <button onClick={() => {setAuthMode('register'); setAuthError('');}} className="text-blue-600 font-semibold hover:underline">Register here</button></p>
+                  : <p>Already have an account? <button onClick={() => {setAuthMode('login'); setAuthError('');}} className="text-blue-600 font-semibold hover:underline">Sign in</button></p>
+                }
+              </div>
+            </div>
+          </div>
+        );
+      }
+
+      // --- RENDER MAIN DASHBOARD ---
+      const formattedDate = new Date(currentDate).toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
+      const currentRecord = attendanceData[currentDate] || {};
+
+      return (
+        <div className="min-h-screen pb-12 flex flex-col">
+          {/* Header */}
+          <header className="bg-blue-900 text-white shadow-md sticky top-0 z-50">
+            <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4">
+              <div className="flex flex-col md:flex-row justify-between items-center gap-4">
+                <div className="flex items-center gap-3">
+                   <div className="w-10 h-10 bg-white rounded-lg flex items-center justify-center shadow-sm">
+                    <span className="text-lg font-black text-blue-900">ET</span>
+                  </div>
+                  <div>
+                    <h1 className="text-xl font-bold leading-tight">EduTrack</h1>
+                    <p className="text-blue-200 text-xs">Welcome, {currentUser.name}</p>
+                  </div>
+                </div>
+                
+                <div className="flex items-center gap-4">
+                  <div className="hidden sm:flex bg-blue-800/80 p-1 rounded-lg border border-blue-700">
+                    <button onClick={() => setViewRole('adviser')} className={`px-3 py-1.5 text-xs font-medium rounded-md transition-all ${viewRole === 'adviser' ? 'bg-white text-blue-900 shadow-sm' : 'text-blue-100 hover:text-white'}`}>Adviser</button>
+                    <button onClick={() => setViewRole('subject')} className={`px-3 py-1.5 text-xs font-medium rounded-md transition-all ${viewRole === 'subject' ? 'bg-white text-blue-900 shadow-sm' : 'text-blue-100 hover:text-white'}`}>Subject</button>
+                  </div>
+                  <button onClick={handleLogout} className="text-sm bg-red-500 hover:bg-red-600 text-white px-4 py-2 rounded-lg font-medium shadow-sm">Logout</button>
+                </div>
+              </div>
+            </div>
+          </header>
+
+          <main className="flex-grow max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 mt-6 space-y-6">
+            
+            {/* Tabs Navigation */}
+            <div className="border-b border-slate-200">
+              <nav className="flex space-x-8">
+                <button onClick={() => setActiveTab('daily')} className={`py-4 px-1 border-b-2 font-medium text-sm transition-colors ${activeTab === 'daily' ? 'border-blue-600 text-blue-600' : 'border-transparent text-slate-500 hover:text-slate-700'}`}>Daily Attendance</button>
+                <button onClick={() => setActiveTab('monthly')} className={`py-4 px-1 border-b-2 font-medium text-sm transition-colors ${activeTab === 'monthly' ? 'border-blue-600 text-blue-600' : 'border-transparent text-slate-500 hover:text-slate-700'}`}>Monthly Report</button>
+              </nav>
+            </div>
+
+            {/* DAILY ATTENDANCE TAB */}
+            {activeTab === 'daily' && (
+              <div className="space-y-6">
+                {/* Controls Bar */}
+                <div className="bg-white p-4 rounded-xl shadow-sm border border-slate-200 flex flex-col md:flex-row gap-4 items-start md:items-center justify-between">
+                  <div>
+                    <h2 className="text-lg font-semibold text-slate-800">Grade 10 - Rizal</h2>
+                    <p className="text-sm text-slate-500">{viewRole === 'adviser' ? 'Class Advisory Attendance (AM & PM)' : 'Subject Attendance (Single Session)'}</p>
+                  </div>
+                  
+                  <div className="flex items-center gap-4 flex-wrap">
+                    <div className="flex items-center gap-2">
+                      <label className="text-sm font-medium text-slate-600">Date:</label>
+                      <input type="date" value={currentDate} onChange={(e) => setCurrentDate(e.target.value)} className="bg-slate-50 border border-slate-300 text-sm rounded-lg focus:ring-blue-500 px-3 py-2 cursor-pointer" />
+                    </div>
+                    {/* Cloud Save Button */}
+                    <button 
+                      onClick={saveAttendanceToServer} 
+                      disabled={isSaving}
+                      className="bg-green-600 hover:bg-green-700 disabled:bg-slate-400 disabled:cursor-not-allowed text-white px-4 py-2 rounded-lg text-sm font-bold shadow-sm flex items-center gap-2 transition-colors"
+                    >
+                      {isSaving ? '⏳ Saving...' : '☁️ Save to Cloud'}
+                    </button>
+                  </div>
+                </div>
+
+                {/* Attendance Table */}
+                <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
+                  <div className="overflow-x-auto custom-scrollbar">
+                    <table className="w-full text-left border-collapse min-w-[600px]">
+                      <thead>
+                        <tr className="bg-slate-100/80 border-b border-slate-200 text-sm uppercase tracking-wider text-slate-600">
+                          <th className="p-4 font-semibold w-12 text-center">No.</th>
+                          <th className="p-4 font-semibold">Student Name</th>
+                          <th className="p-4 font-semibold text-center w-20">Sex</th>
+                          
+                          {viewRole === 'adviser' ? (
+                            <>
+                              <th className="p-4 font-semibold text-center border-l border-slate-200 bg-amber-50/50">
+                                <div className="flex flex-col items-center gap-2"><span>AM Session</span>
+                                  <div className="flex gap-1">
+                                    <button onClick={() => markAll('am', 'present')} className="text-xs bg-green-100 text-green-700 px-2 py-1 rounded hover:bg-green-200 font-bold">All P</button>
+                                    <button onClick={() => markAll('am', 'absent')} className="text-xs bg-red-100 text-red-700 px-2 py-1 rounded hover:bg-red-200 font-bold">All A</button>
+                                  </div>
+                                </div>
+                              </th>
+                              <th className="p-4 font-semibold text-center border-l border-slate-200 bg-indigo-50/50">
+                                <div className="flex flex-col items-center gap-2"><span>PM Session</span>
+                                  <div className="flex gap-1">
+                                    <button onClick={() => markAll('pm', 'present')} className="text-xs bg-green-100 text-green-700 px-2 py-1 rounded hover:bg-green-200 font-bold">All P</button>
+                                    <button onClick={() => markAll('pm', 'absent')} className="text-xs bg-red-100 text-red-700 px-2 py-1 rounded hover:bg-red-200 font-bold">All A</button>
+                                  </div>
+                                </div>
+                              </th>
+                            </>
+                          ) : (
+                            <th className="p-4 font-semibold text-center border-l border-slate-200 bg-blue-50/30">
+                              <div className="flex flex-col items-center gap-2"><span>Subject Session</span>
+                                  <div className="flex gap-1">
+                                    <button onClick={() => markAll('single', 'present')} className="text-xs bg-green-100 text-green-700 px-2 py-1 rounded hover:bg-green-200 font-bold">All P</button>
+                                    <button onClick={() => markAll('single', 'absent')} className="text-xs bg-red-100 text-red-700 px-2 py-1 rounded hover:bg-red-200 font-bold">All A</button>
+                                  </div>
+                                </div>
+                            </th>
+                          )}
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100">
+                        {students.map((student, index) => {
+                          const record = currentRecord[student.id] || {};
+                          return (
+                            <tr key={student.id} className="hover:bg-slate-50 transition-colors group">
+                              <td className="p-4 text-center text-slate-400 text-sm font-medium">{index + 1}</td>
+                              <td className="p-4 font-medium text-slate-900">{student.name}</td>
+                              <td className="p-4 text-center"><span className={`inline-flex items-center justify-center w-6 h-6 rounded-full text-xs font-bold ${student.gender === 'M' ? 'bg-blue-100 text-blue-700' : 'bg-pink-100 text-pink-700'}`}>{student.gender}</span></td>
+                              
+                              {viewRole === 'adviser' ? (
+                                <>
+                                  <td className="p-4 border-l border-slate-100 bg-amber-50/30">
+                                    <div className="flex justify-center gap-2">
+                                      <button onClick={() => markAttendance(student.id, 'am', 'present')} className={`w-10 h-10 rounded-full flex items-center justify-center font-bold text-sm border-2 ${record.am === 'present' ? 'bg-green-500 text-white border-green-500 scale-110' : 'bg-white text-slate-400 hover:border-green-400'}`}>P</button>
+                                      <button onClick={() => markAttendance(student.id, 'am', 'absent')} className={`w-10 h-10 rounded-full flex items-center justify-center font-bold text-sm border-2 ${record.am === 'absent' ? 'bg-red-500 text-white border-red-500 scale-110' : 'bg-white text-slate-400 hover:border-red-400'}`}>A</button>
+                                    </div>
+                                  </td>
+                                  <td className="p-4 border-l border-slate-100 bg-indigo-50/30">
+                                    <div className="flex justify-center gap-2">
+                                      <button onClick={() => markAttendance(student.id, 'pm', 'present')} className={`w-10 h-10 rounded-full flex items-center justify-center font-bold text-sm border-2 ${record.pm === 'present' ? 'bg-green-500 text-white border-green-500 scale-110' : 'bg-white text-slate-400 hover:border-green-400'}`}>P</button>
+                                      <button onClick={() => markAttendance(student.id, 'pm', 'absent')} className={`w-10 h-10 rounded-full flex items-center justify-center font-bold text-sm border-2 ${record.pm === 'absent' ? 'bg-red-500 text-white border-red-500 scale-110' : 'bg-white text-slate-400 hover:border-red-400'}`}>A</button>
+                                    </div>
+                                  </td>
+                                </>
+                              ) : (
+                                <td className="p-4 border-l border-slate-100">
+                                  <div className="flex justify-center gap-3">
+                                    <button onClick={() => markAttendance(student.id, 'single', 'present')} className={`px-4 py-2 rounded-lg font-bold text-sm border-2 w-24 ${record.single === 'present' ? 'bg-green-500 text-white border-green-500' : 'bg-white text-slate-500 hover:border-green-400'}`}>Present</button>
+                                    <button onClick={() => markAttendance(student.id, 'single', 'absent')} className={`px-4 py-2 rounded-lg font-bold text-sm border-2 w-24 ${record.single === 'absent' ? 'bg-red-500 text-white border-red-500' : 'bg-white text-slate-500 hover:border-red-400'}`}>Absent</button>
+                                  </div>
+                                </td>
+                              )}
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+
+                {/* Daily Statistics Summary */}
+                <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
+                  <div className="bg-slate-800 text-white px-6 py-4 flex justify-between">
+                    <div><h3 className="font-semibold text-lg">Daily Attendance Summary</h3><p className="text-slate-300 text-sm">{formattedDate}</p></div>
+                  </div>
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-left border-collapse">
+                      <thead>
+                        <tr className="bg-slate-50 border-b border-slate-200 text-sm uppercase text-slate-500">
+                          <th className="p-3 font-semibold">Category</th><th className="p-3 font-semibold text-center">Enrollment</th><th className="p-3 font-semibold text-center">Present</th><th className="p-3 font-semibold text-center">Absent</th><th className="p-3 font-semibold text-center text-indigo-700 bg-indigo-50/50">Daily ADA</th><th className="p-3 font-semibold text-center text-blue-700 bg-blue-50/50">Daily PDA</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100">
+                        <tr className="hover:bg-slate-50/50"><td className="p-3 font-medium text-slate-700"><span className="w-3 h-3 rounded-full bg-blue-400 inline-block mr-2"></span>Male</td><td className="p-3 text-center font-semibold">{dailyMaleStats.enrollment}</td><td className="p-3 text-center text-green-600 font-semibold">{dailyMaleStats.present}</td><td className="p-3 text-center text-red-500 font-semibold">{dailyMaleStats.absent}</td><td className="p-3 text-center text-indigo-600 font-bold bg-indigo-50/20">{dailyMaleStats.ada}</td><td className="p-3 text-center text-blue-600 font-bold bg-blue-50/20">{dailyMaleStats.pda}%</td></tr>
+                        <tr className="hover:bg-slate-50/50"><td className="p-3 font-medium text-slate-700"><span className="w-3 h-3 rounded-full bg-pink-400 inline-block mr-2"></span>Female</td><td className="p-3 text-center font-semibold">{dailyFemaleStats.enrollment}</td><td className="p-3 text-center text-green-600 font-semibold">{dailyFemaleStats.present}</td><td className="p-3 text-center text-red-500 font-semibold">{dailyFemaleStats.absent}</td><td className="p-3 text-center text-indigo-600 font-bold bg-indigo-50/20">{dailyFemaleStats.ada}</td><td className="p-3 text-center text-blue-600 font-bold bg-blue-50/20">{dailyFemaleStats.pda}%</td></tr>
+                      </tbody>
+                      <tfoot className="bg-slate-100/80 border-t-2 border-slate-300">
+                        <tr><td className="p-3 font-black text-slate-900 uppercase">Total</td><td className="p-3 text-center font-black">{dailyTotalStats.enrollment}</td><td className="p-3 text-center font-black text-green-700">{dailyTotalStats.present}</td><td className="p-3 text-center font-black text-red-600">{dailyTotalStats.absent}</td><td className="p-3 text-center font-black text-indigo-700 bg-indigo-100/50">{dailyTotalStats.ada}</td><td className="p-3 text-center font-black text-blue-700 bg-blue-100/50">{dailyTotalStats.pda}%</td></tr>
+                      </tfoot>
+                    </table>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* MONTHLY REPORT TAB */}
+            {activeTab === 'monthly' && (
+              <div className="space-y-6">
+                <div className="bg-white p-4 rounded-xl shadow-sm border border-slate-200 flex flex-col md:flex-row gap-4 items-start md:items-center justify-between">
+                  <div><h2 className="text-lg font-semibold text-slate-800">Monthly Attendance Report</h2><p className="text-sm text-slate-500">Cumulative data from cloud storage</p></div>
+                  <div className="flex items-center gap-3"><label className="text-sm font-medium text-slate-600">Select Month:</label><input type="month" value={currentMonth} onChange={(e) => setCurrentMonth(e.target.value)} className="bg-slate-50 border border-slate-300 text-sm rounded-lg focus:ring-blue-500 px-3 py-2 cursor-pointer" /></div>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                  <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-5 border-l-4 border-l-blue-500"><p className="text-sm font-medium text-slate-500 mb-1">Total School Days</p><p className="text-3xl font-bold text-slate-800">{totalSchoolDays}</p></div>
+                  <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-5 border-l-4 border-l-indigo-500"><p className="text-sm font-medium text-slate-500 mb-1">Monthly ADA</p><p className="text-3xl font-bold text-slate-800">{monthlyADA}</p></div>
+                  <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-5 border-l-4 border-l-green-500"><p className="text-sm font-medium text-slate-500 mb-1">Monthly PDA</p><p className="text-3xl font-bold text-slate-800">{monthlyPDA}%</p></div>
+                </div>
+
+                <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
+                  <div className="overflow-x-auto custom-scrollbar">
+                    <table className="w-full text-left border-collapse min-w-[600px]">
+                      <thead>
+                        <tr className="bg-slate-50 border-b border-slate-200 text-sm uppercase text-slate-600">
+                          <th className="p-4 font-semibold w-12 text-center">No.</th><th className="p-4 font-semibold">Student Name</th><th className="p-4 font-semibold text-center">Sex</th><th className="p-4 font-semibold text-center">Total Present</th><th className="p-4 font-semibold text-center">Total Absent</th><th className="p-4 font-semibold text-center">% Present</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100">
+                        {studentMonthlyData.map((student, index) => (
+                          <tr key={student.id} className="hover:bg-slate-50">
+                            <td className="p-4 text-center text-slate-400 text-sm font-medium">{index + 1}</td>
+                            <td className="p-4 font-medium text-slate-900">{student.name}</td>
+                            <td className="p-4 text-center"><span className={`inline-flex items-center justify-center w-6 h-6 rounded-full text-xs font-bold ${student.gender === 'M' ? 'bg-blue-100 text-blue-700' : 'bg-pink-100 text-pink-700'}`}>{student.gender}</span></td>
+                            <td className="p-4 text-center font-semibold text-green-600">{student.daysPresent}</td>
+                            <td className="p-4 text-center font-semibold text-red-500">{student.daysAbsent}</td>
+                            <td className="p-4 text-center font-bold text-slate-700"><div className="flex items-center justify-center gap-2"><span>{student.percentage}%</span><div className="w-16 h-2 bg-slate-200 rounded-full overflow-hidden"><div className="h-full bg-green-500" style={{width: `${student.percentage}%`}}></div></div></div></td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              </div>
+            )}
+          </main>
+        </div>
+      );
+    }
+
+    const root = ReactDOM.createRoot(document.getElementById('root'));
+    root.render(<App />);
+  </script>
+</body>
+</html>
